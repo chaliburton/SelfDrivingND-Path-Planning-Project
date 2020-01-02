@@ -50,8 +50,6 @@ int main() {
     map_waypoints_dx.push_back(d_x);
     map_waypoints_dy.push_back(d_y);
   }
-  int lane = 1;																	// Create reference lane
-  double ref_vel = 49.5;														// Add a speed limit
 
   h.onMessage([&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,
                &map_waypoints_dx,&map_waypoints_dy]
@@ -86,6 +84,8 @@ int main() {
           // Previous path's end s and d values 
           double end_path_s = j[1]["end_path_s"];
           double end_path_d = j[1]["end_path_d"];
+          int lane = 1;																	// Create reference lane
+          double ref_vel = 49.5;														// Add a speed limit
 
           // Sensor Fusion Data, a list of all other cars on the same side 
           //   of the road.
@@ -100,6 +100,30 @@ int main() {
            * TODO: define a path made up of (x,y) points that the car will visit
            *   sequentially every .02 seconds
            */
+          
+          if(prev_size >0){
+            car_s = end_path_s;
+          }
+          
+          // Cycle through all other cars within sensor range to determine their behaviour and modify vehicle target speed
+          bool too_close = false;
+          
+          for (int i = 0; i < sensor_fusion.size(); i++){
+            float d = sensor_fusion[i][6];
+            if(d < (2+4*lane+2) && d> (2+4*lane-2)){
+              double vx = sensor_fusion[i][3];
+              double vy = sensor_fusion[i][4];
+              double check_speed = sqrt(vx*vx+vy*vy);
+              double check_car_s = sensor_fusion[i][5];
+              
+              check_car_s+= ((double)prev_size*.02*check_speed);
+              if((check_car_s>car_s)&&((check_car_s-car_s)<30)){
+                ref_vel = 29.5;
+              }
+            }
+          }
+        
+              
 
 
           vector<double> ptsx;
@@ -135,7 +159,8 @@ int main() {
             ptsy.push_back(ref_y_prev);
             ptsy.push_back(ref_y);
           }
-          
+//          int lane =1;
+//          double ref_vel = 49.5;
           vector<double> next_wp0 = getXY(car_s+30,(2+4*lane),map_waypoints_s, map_waypoints_x, map_waypoints_y);
           vector<double> next_wp1 = getXY(car_s+60,(2+4*lane),map_waypoints_s, map_waypoints_x, map_waypoints_y);
           vector<double> next_wp2 = getXY(car_s+90,(2+4*lane),map_waypoints_s, map_waypoints_x, map_waypoints_y);
@@ -166,7 +191,7 @@ int main() {
           vector<double> next_x_vals;
           vector<double> next_y_vals;
 
-          for (int i = 0; i < previous_path_x; i++) {
+          for (int i = 0; i < previous_path_x.size(); i++) {
             next_x_vals.push_back(previous_path_x[i]);
             next_y_vals.push_back(previous_path_y[i]);
             //std::cout<<next_xy[0]<<" "<<next_xy[1]<<std::endl;
