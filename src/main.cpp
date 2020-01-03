@@ -232,9 +232,9 @@ int main() {
           
           // Change target speed based on proximity to vehicle in front and to ensure accel and jerk aren't violated
           if(too_close){
-            ref_vel-=0.40;
+            ref_vel-=0.30;
           } else if (ref_vel <max_vel) {
-            ref_vel+=0.5;
+            ref_vel+=0.6;
           }
 
           
