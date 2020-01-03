@@ -28,6 +28,21 @@ int main() {
   string map_file_ = "../data/highway_map.csv";
   // The max s value before wrapping around the track back to 0
   double max_s = 6945.554;
+  int lane = 1;
+  double d_car_prev = 2+4*lane;
+  int desired_lane = 0;
+  double ref_vel = 0;														// Add a speed limit
+  int time_since_shift = 0;
+  double target_d = 0;
+  enum states
+  {   KL = 0,
+      LCL = 1, 
+      LCR = 2, 
+      HOLD = 3 
+    } state = HOLD;
+  vector<double> nearest_ahead = {max_s, max_s, max_s};	//create distance measurement of open space in each lane biased to passing lane for optimzer/cost function
+  vector<double> nearest_behind = {max_s, max_s, max_s};	//create distance measurement of open space in each lane
+
 
   std::ifstream in_map_(map_file_.c_str(), std::ifstream::in);
 
@@ -50,16 +65,19 @@ int main() {
     map_waypoints_dx.push_back(d_x);
     map_waypoints_dy.push_back(d_y);
   }
+  
+  
 
-  h.onMessage([&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,
-               &map_waypoints_dx,&map_waypoints_dy]
+  h.onMessage([&nearest_ahead,&nearest_behind, &desired_lane, &lane, &ref_vel, &map_waypoints_x,&map_waypoints_y,&map_waypoints_s,
+               &map_waypoints_dx,&map_waypoints_dy, &max_s, &time_since_shift, &state, &target_d]
               (uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
     // The 2 signifies a websocket event
     if (length && length > 2 && data[0] == '4' && data[1] == '2') {
-
+      double max_vel = 49.5;
+     
       auto s = hasData(data);
 
       if (s != "") {
@@ -84,8 +102,7 @@ int main() {
           // Previous path's end s and d values 
           double end_path_s = j[1]["end_path_s"];
           double end_path_d = j[1]["end_path_d"];
-          int lane = 1;																	// Create reference lane
-          double ref_vel = 49.5;														// Add a speed limit
+
 
           // Sensor Fusion Data, a list of all other cars on the same side 
           //   of the road.
@@ -95,36 +112,127 @@ int main() {
           
           json msgJson;
 
-          
-          /**
-           * TODO: define a path made up of (x,y) points that the car will visit
-           *   sequentially every .02 seconds
-           */
-          
           if(prev_size >0){
             car_s = end_path_s;
           }
-          
+
+          nearest_ahead = {max_s, max_s-500.0, max_s-900.0};
+          nearest_behind = {-max_s, -max_s, -max_s};
           // Cycle through all other cars within sensor range to determine their behaviour and modify vehicle target speed
           bool too_close = false;
+          //
           
+          
+          
+          
+          
+          
+          
+          
+          //
+          if (car_d<4){
+            lane = 0;
+          } else if (car_d>8){
+            lane = 2;
+          } else {
+            lane =1;
+          }
           for (int i = 0; i < sensor_fusion.size(); i++){
             float d = sensor_fusion[i][6];
+            double check_car_s = sensor_fusion[i][5];
+            double vx = sensor_fusion[i][3];
+            double vy = sensor_fusion[i][4];
+            double check_speed = sqrt(vx*vx+vy*vy);
+            check_car_s+= ((double)prev_size*.02*check_speed);
+            double check_car_dist = check_car_s-car_s;
+            
+            // CHECK NEAREST CAR AHEAD IN EACH LANE
+            if(d<=4 && check_car_dist>=0 && check_car_dist<nearest_ahead[0]){
+              nearest_ahead[0] = check_car_dist;
+            } else if (d>=8 && check_car_dist>=0 && check_car_dist<nearest_ahead[2]){
+              nearest_ahead[2] = check_car_dist;
+            } else if (d>4 && d<8 && check_car_dist>=0 && check_car_dist<nearest_ahead[1]){
+              nearest_ahead[1] = check_car_dist;
+            }
+            // CHECK NEAREST CAR BEHIND IN EACH LANE
+            if(d<=4 && check_car_dist<0 && check_car_dist>nearest_behind[0]){
+              nearest_behind[0] = check_car_dist;
+            } else if (d>=8 && check_car_dist<0 && check_car_dist>nearest_behind[2]){
+              nearest_behind[2] = check_car_dist;
+            } else if (d>4 && d<8 && check_car_dist<0 && check_car_dist>nearest_behind[1]){
+              nearest_behind[1] = check_car_dist;
+            }
+            // CHECK IF VEHICLE IN FRONT IS WITHIN SAFE FOLLOWING DISTANCE
             if(d < (2+4*lane+2) && d> (2+4*lane-2)){
-              double vx = sensor_fusion[i][3];
-              double vy = sensor_fusion[i][4];
-              double check_speed = sqrt(vx*vx+vy*vy);
-              double check_car_s = sensor_fusion[i][5];
-              
-              check_car_s+= ((double)prev_size*.02*check_speed);
-              if((check_car_s>car_s)&&((check_car_s-car_s)<30)){
-                ref_vel = 29.5;
+              if((check_car_s>car_s)&&((check_car_dist)<40)){
+                too_close = true;
               }
             }
           }
-        
-              
+          
+          std::cout<<std::endl<<"Occupied: "<<lane<<" currently calculated: "<<std::endl;
+          desired_lane = std::max_element(nearest_ahead.begin(),nearest_ahead.end()) - nearest_ahead.begin();
+          std::cout<<"Desired: "<<desired_lane<< "    " << nearest_ahead[0]<< "    " << nearest_ahead[1]<< "    " << nearest_ahead[2]<<std::endl;
+          std::cout<<"Current: "<<desired_lane<< "    " << nearest_behind[0]<< "    " << nearest_behind[1]<< "    " << nearest_behind[2]<<std::endl;
+          
 
+          if (state == HOLD){
+            time_since_shift++;
+            std::cout<<time_since_shift;
+            if(time_since_shift>50)
+              state = KL;
+          } else if(state == KL){
+            // check car in other lanes gap range of s, then check right, cost function
+            // check lane to left if exists
+            //eval lane changes
+            std::cout<<"Test KEEP_Lane"<<std::endl<<std::endl<<std::endl;
+            double optimal = 0; // should really track vehicle velocity behind
+            if (car_speed>0.5*max_vel){
+              optimal = std::min(1.0,car_speed/max_vel*(std::min(std::max(std::max(nearest_ahead[0],nearest_ahead[1]),nearest_ahead[2]),100.0))/100);
+            }
+
+            if(optimal>0.5 || too_close){
+              int lane_error = desired_lane - lane;
+              std::cout<<" Optimizer, fix lane error of: "<<lane_error<<std::endl;
+              if (lane_error>0){
+                state = LCR;
+              } else if (lane_error<0){
+                state = LCL;
+              }
+              
+            }
+          } else if(state ==LCR){
+            if(nearest_ahead[lane+1]>30 && ((nearest_behind[lane+1]<-10 && car_speed>0.85*max_vel) 
+                                            || (nearest_behind[lane+1]<-20 && car_speed>0.5*max_vel)
+                                            || (nearest_behind[lane+1]<-60))){
+              lane++;
+              target_d = (2+lane*4-1.8);
+              std::cout<<">>>>>>>SHIFT RIGHT>>>>>>>"<<std::endl;
+            }
+            if(car_d>target_d){
+              state=HOLD;
+              time_since_shift = 0;
+            }
+          } else if (state == LCL){
+            if(nearest_ahead[lane-1]>30 && ((nearest_behind[lane-1]<-10 && car_speed>0.85*max_vel) 
+                                            || (nearest_behind[lane-1]<-20 && car_speed>0.5*max_vel)
+                                            || (nearest_behind[lane-1]<-60))){// need to implement fix for including vehicle speed 
+              lane--;
+              target_d = (2+lane*4+1.8);
+              std::cout<<"<<<<<<<SHIFT LEFT<<<<<<<"<<std::endl;
+            }
+            if(car_d<target_d){
+              state=HOLD;
+              time_since_shift = 0;
+            }
+          }
+          std::cout<<"                                                    "<<lane<<" The state machine is in: "<<state ;
+          
+          if(too_close ){
+            ref_vel-=0.40;
+          } else if (ref_vel <max_vel) {
+            ref_vel+=0.5;
+          }
 
           vector<double> ptsx;
           vector<double> ptsy;
@@ -159,8 +267,7 @@ int main() {
             ptsy.push_back(ref_y_prev);
             ptsy.push_back(ref_y);
           }
-//          int lane =1;
-//          double ref_vel = 49.5;
+
           vector<double> next_wp0 = getXY(car_s+30,(2+4*lane),map_waypoints_s, map_waypoints_x, map_waypoints_y);
           vector<double> next_wp1 = getXY(car_s+60,(2+4*lane),map_waypoints_s, map_waypoints_x, map_waypoints_y);
           vector<double> next_wp2 = getXY(car_s+90,(2+4*lane),map_waypoints_s, map_waypoints_x, map_waypoints_y);
@@ -227,6 +334,7 @@ int main() {
             next_x_vals.push_back(x_point);
             next_y_vals.push_back(y_point);
           }
+
 
           
           
